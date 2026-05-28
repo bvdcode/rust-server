@@ -45,8 +45,8 @@ RUN set -eux; \
     gosu --version; \
     gosu nobody true
 
-# Update system packages, install core dependencies
-# and generate default locales
+# Update system packages, install core + runtime dependencies (nginx, node, ...)
+# and generate default locales — single RUN to keep one apt-metadata layer
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
@@ -56,10 +56,19 @@ RUN set -eux; \
         curl \
         git \
         sudo \
-        libarchive-tools; \
+        libarchive-tools \
+        nginx \
+        expect \
+        tcl \
+        libgdiplus \
+        nodejs \
+        npm; \
     sed -i 's/^#\s*en_US.UTF-8\s\+UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
     locale-gen en_US.UTF-8; \
     update-locale LANG=en_US.UTF-8; \
+    node --version; \
+    npm --version; \
+    rm -fr /usr/share/nginx/html/* /etc/nginx/sites-available/* /etc/nginx/sites-enabled/*; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/tmp/* /tmp/*
 
@@ -122,26 +131,12 @@ RUN set -eux; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/tmp/* /tmp/dumps /tmp/*
 
-# Install steamcmd and verify that it is working
+# Install steamcmd (no warm-up — steamcmd self-updates on first run, and the
+# build-time +login fetch makes the build network-dependent on Steam servers)
 RUN mkdir -p /steamcmd && \
     curl -fsSL http://media.steampowered.com/installer/steamcmd_linux.tar.gz \
     | tar -v -C /steamcmd -zx && \
-    chmod +x /steamcmd/steamcmd.sh && \
-    /steamcmd/steamcmd.sh +login anonymous +quit
-
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-        nginx \
-        expect \
-        tcl \
-        libgdiplus \
-        nodejs \
-        npm; \
-    node --version; \
-    npm --version; \
-    rm -rf /var/lib/apt/lists/*; \
-    rm -fr /usr/share/nginx/html/* /etc/nginx/sites-available/* /etc/nginx/sites-enabled/*
+    chmod +x /steamcmd/steamcmd.sh
 
 # Install webrcon (specific commit)
 COPY nginx_rcon.conf /etc/nginx/nginx.conf
@@ -155,19 +150,31 @@ COPY fix_conn.sh /tmp/fix_conn.sh
 # Create the volume directories
 RUN mkdir -p /steamcmd/rust /usr/share/nginx/html /var/log/nginx
 
-# Setup proper shutdown support
+# Install npm dependencies per-app — package*.json copied first, so app.js edits
+# don't invalidate the (heavy) npm-install layers
+COPY shutdown_app/package*.json /app/shutdown_app/
+RUN cd /app/shutdown_app && npm install --omit=dev
+
+COPY restart_app/package*.json /app/restart_app/
+RUN cd /app/restart_app && npm install --omit=dev
+
+COPY scheduler_app/package*.json /app/scheduler_app/
+RUN cd /app/scheduler_app && npm install --omit=dev
+
+COPY heartbeat_app/package*.json /app/heartbeat_app/
+RUN cd /app/heartbeat_app && npm install --omit=dev
+
+COPY rcon_app/package*.json /app/rcon_app/
+RUN cd /app/rcon_app && npm install --omit=dev
+
+# Now copy the app source files — these layers are cheap to rebuild
 COPY shutdown_app/ /app/shutdown_app/
 COPY restart_app/ /app/restart_app/
 COPY scheduler_app/ /app/scheduler_app/
 COPY heartbeat_app/ /app/heartbeat_app/
 COPY rcon_app/ /app/rcon_app/
-RUN set -eux; \
-    npm config set registry https://registry.npmjs.org/; \
-    for app_dir in shutdown_app restart_app scheduler_app heartbeat_app rcon_app; do \
-        cd "/app/${app_dir}"; \
-        npm install --omit=dev; \
-    done; \
-    ln -s /app/rcon_app/app.js /usr/bin/rcon
+
+RUN ln -s /app/rcon_app/app.js /usr/bin/rcon
 
 # Add the steamcmd installation script
 COPY install.txt /app/install.txt
@@ -181,8 +188,8 @@ COPY update_check.sh /app/update_check.sh
 # Ensure runtime scripts are executable (preserve exec bit on Windows-built contexts)
 RUN chmod +x /tmp/fix_conn.sh /app/start.sh /app/update_check.sh
 
-# Copy extra files
-COPY LICENSE.md /app/
+# Copy extra files (reuse the LICENSE.md already at /, no need for a second COPY)
+RUN cp /LICENSE.md /app/LICENSE.md
 
 # Set the current working directory
 WORKDIR /
