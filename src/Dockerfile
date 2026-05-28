@@ -178,6 +178,9 @@ COPY start_rust.sh /app/start.sh
 # Copy the Rust update check script
 COPY update_check.sh /app/update_check.sh
 
+# Ensure runtime scripts are executable (preserve exec bit on Windows-built contexts)
+RUN chmod +x /tmp/fix_conn.sh /app/start.sh /app/update_check.sh
+
 # Copy extra files
 COPY LICENSE.md /app/
 
