@@ -56,9 +56,11 @@ if [ ! -d "/steamcmd/rust/server/${RUST_SERVER_IDENTITY}" ]; then
 	mkdir -p "/steamcmd/rust/server/${RUST_SERVER_IDENTITY}"
 fi
 
-# Install/update steamcmd
-echo "Installing/updating steamcmd.."
-curl -s http://media.steampowered.com/installer/steamcmd_linux.tar.gz | bsdtar -xvf- -C /steamcmd
+# Install steamcmd only if missing (it's baked into the image; this guards against a mounted-empty /steamcmd volume)
+if [ ! -f /steamcmd/steamcmd.sh ]; then
+	echo "steamcmd missing, installing.."
+	curl -s http://media.steampowered.com/installer/steamcmd_linux.tar.gz | bsdtar -xvf- -C /steamcmd
+fi
 
 # Check which branch to use
 if [ ! -z ${RUST_BRANCH+x} ]; then

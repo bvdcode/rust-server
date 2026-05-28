@@ -2,7 +2,7 @@
 
 var debug = false
 
-var request = require('request')
+var https = require('https')
 var isRestarting = false
 var now = Math.floor(new Date() / 1000)
 var timeout = (1000 * 60) * 30
@@ -29,26 +29,51 @@ function checkForClientUpdate () {
   }
 
   console.log('RestartApp::Checking if a client update is available..')
-  request({ url: 'https://whenisupdate.com/api.json', headers: { Referer: 'rust-docker-server' }, timeout: 10000 }, function (error, response, body) {
-    if (!error && response.statusCode === 200) {
-      var info = JSON.parse(body)
-      var latest = info.latest
-      if (latest !== undefined && latest.length > 0) {
-        if (latest >= now) {
-          console.log('RestartApp::Client update is out, forcing a restart')
-          restart()
-          return
-        }
-      }
-      if (debug) console.log('RestartApp::Client update not out yet..')
-    } else if (debug) {
-      console.log('RestartApp::Error: ' + error)
-    }
 
-    // Keep checking for client updates every 5 minutes
+  function scheduleNext () {
     setTimeout(function () {
       checkForClientUpdate()
     }, updateCheckInterval)
+  }
+
+  var options = {
+    headers: { Referer: 'rust-docker-server' },
+    timeout: 10000
+  }
+  var req = https.get('https://whenisupdate.com/api.json', options, function (response) {
+    if (response.statusCode !== 200) {
+      response.resume()
+      if (debug) console.log('RestartApp::Error: HTTP ' + response.statusCode)
+      scheduleNext()
+      return
+    }
+    var chunks = []
+    response.on('data', function (chunk) { chunks.push(chunk) })
+    response.on('end', function () {
+      var body = Buffer.concat(chunks).toString('utf8')
+      try {
+        var info = JSON.parse(body)
+        var latest = info.latest
+        if (latest !== undefined && latest.length > 0) {
+          if (latest >= now) {
+            console.log('RestartApp::Client update is out, forcing a restart')
+            restart()
+            return
+          }
+        }
+        if (debug) console.log('RestartApp::Client update not out yet..')
+      } catch (e) {
+        if (debug) console.log('RestartApp::Error: ' + e)
+      }
+      scheduleNext()
+    })
+  })
+  req.on('timeout', function () {
+    req.destroy(new Error('timeout'))
+  })
+  req.on('error', function (error) {
+    if (debug) console.log('RestartApp::Error: ' + error)
+    scheduleNext()
   })
 }
 
