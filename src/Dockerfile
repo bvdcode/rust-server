@@ -97,7 +97,7 @@ ENV ENABLE_PASSWORDLESS_SUDO "false"
 COPY LICENSE.md /
 
 # Add base image initialization script
-COPY Scripts/entrypoint.sh /entrypoint.sh
+COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Set the main entry point to our initialization script
