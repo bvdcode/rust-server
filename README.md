@@ -1,4 +1,4 @@
-# rust-server
+# Rust Game Server
 
 Docker image for running a [Rust](https://store.steampowered.com/app/252490/Rust/) dedicated server. Bundles SteamCMD, the latest server build, an optional Oxide/uMod install, and the Facepunch webrcon UI served through nginx.
 
