@@ -43,6 +43,142 @@ install_or_update()
 	fi
 }
 
+OXIDE_URL="https://umod.org/games/rust/download/develop"
+OXIDE_CACHE_DIR="/steamcmd/rust/.oxide-cache"
+OXIDE_CACHE_ARCHIVE="$OXIDE_CACHE_DIR/Oxide.Rust.zip"
+OXIDE_CORE_RELATIVE_PATH="RustDedicated_Data/Managed/Oxide.Core.dll"
+OXIDE_CORE_PATH="/steamcmd/rust/$OXIDE_CORE_RELATIVE_PATH"
+OXIDE_DOWNLOAD_ARCHIVE=""
+
+validate_oxide_archive()
+{
+	local archive_path="$1"
+
+	if [ ! -s "$archive_path" ]; then
+		echo "Oxide archive is missing or empty: $archive_path"
+		return 1
+	fi
+
+	if ! bsdtar -tf "$archive_path" | sed 's#^\./##' | grep -Fxq "$OXIDE_CORE_RELATIVE_PATH"; then
+		echo "Oxide archive does not contain $OXIDE_CORE_RELATIVE_PATH"
+		return 1
+	fi
+}
+
+ensure_oxide_installed()
+{
+	if [ ! -f "$OXIDE_CORE_PATH" ]; then
+		echo "Oxide install failed: missing $OXIDE_CORE_PATH"
+		exit 1
+	fi
+}
+
+download_oxide_archive()
+{
+	mkdir -p "$OXIDE_CACHE_DIR"
+
+	local tmp_archive
+	tmp_archive="$(mktemp "$OXIDE_CACHE_DIR/Oxide.Rust.XXXXXX.zip")"
+
+	local attempt=1
+	local retry_delays=(3 9 21)
+
+	while true; do
+		echo "Downloading Oxide from $OXIDE_URL (attempt $attempt).."
+		if curl -fL --show-error --silent "$OXIDE_URL" -o "$tmp_archive" && validate_oxide_archive "$tmp_archive"; then
+			OXIDE_DOWNLOAD_ARCHIVE="$tmp_archive"
+			echo "Downloaded verified Oxide archive to $OXIDE_DOWNLOAD_ARCHIVE"
+			return 0
+		fi
+
+		rm -f "$tmp_archive"
+
+		local delay
+		delay="${retry_delays[$((attempt - 1))]:-}"
+		if [ -z "$delay" ]; then
+			echo "Failed to download a valid Oxide archive after $attempt attempts"
+			return 1
+		fi
+
+		echo "Oxide download failed, retrying in $delay seconds.."
+		sleep "$delay"
+		tmp_archive="$(mktemp "$OXIDE_CACHE_DIR/Oxide.Rust.XXXXXX.zip")"
+		attempt=$((attempt + 1))
+	done
+}
+
+install_oxide_archive()
+{
+	local archive_path="$1"
+
+	if ! validate_oxide_archive "$archive_path"; then
+		return 1
+	fi
+
+	local extract_dir
+	extract_dir="$(mktemp -d "$OXIDE_CACHE_DIR/extract.XXXXXX")"
+
+	if ! bsdtar -xvf "$archive_path" -C "$extract_dir"; then
+		echo "Failed to extract Oxide archive: $archive_path"
+		rm -fr "$extract_dir"
+		return 1
+	fi
+
+	if [ ! -f "$extract_dir/$OXIDE_CORE_RELATIVE_PATH" ]; then
+		echo "Oxide archive extracted without $OXIDE_CORE_RELATIVE_PATH"
+		rm -fr "$extract_dir"
+		return 1
+	fi
+
+	if ! cp -a "$extract_dir/." /steamcmd/rust/; then
+		echo "Failed to copy extracted Oxide files into /steamcmd/rust"
+		rm -fr "$extract_dir"
+		return 1
+	fi
+
+	rm -fr "$extract_dir"
+
+	if [ -f /steamcmd/rust/CSharpCompiler.x86_x64 ]; then
+		if ! chmod 755 /steamcmd/rust/CSharpCompiler.x86_x64; then
+			echo "Failed to mark /steamcmd/rust/CSharpCompiler.x86_x64 as executable"
+			return 1
+		fi
+	fi
+
+	ensure_oxide_installed
+}
+
+install_oxide()
+{
+	echo "Downloading and installing latest Oxide.."
+
+	if download_oxide_archive; then
+		if install_oxide_archive "$OXIDE_DOWNLOAD_ARCHIVE"; then
+			if mv "$OXIDE_DOWNLOAD_ARCHIVE" "$OXIDE_CACHE_ARCHIVE"; then
+				echo "Cached verified Oxide archive at $OXIDE_CACHE_ARCHIVE"
+			else
+				echo "Failed to cache verified Oxide archive at $OXIDE_CACHE_ARCHIVE"
+				rm -f "$OXIDE_DOWNLOAD_ARCHIVE"
+			fi
+
+			return 0
+		fi
+
+		echo "Downloaded Oxide archive could not be installed"
+		rm -f "$OXIDE_DOWNLOAD_ARCHIVE"
+	fi
+
+	if [ -f "$OXIDE_CACHE_ARCHIVE" ]; then
+		echo "Trying cached Oxide archive: $OXIDE_CACHE_ARCHIVE"
+		if install_oxide_archive "$OXIDE_CACHE_ARCHIVE"; then
+			return 0
+		fi
+	fi
+
+	echo "Oxide install failed"
+	exit 1
+}
+
 # Remove old lock files (used by restart_app/ and update_check.sh)
 rm -fr /tmp/*.lock
 
@@ -103,7 +239,7 @@ fi
 if [ "$RUST_OXIDE_ENABLED" = "1" ]; then
 	# Next check if Oxide doesn't' exist, or if we want to always update it
 	INSTALL_OXIDE="0"
-	if [ ! -f "/steamcmd/rust/CSharpCompiler.x86_x64" ]; then
+	if [ ! -f "$OXIDE_CORE_PATH" ]; then
 		INSTALL_OXIDE="1"
 	fi
 	if [ "$RUST_OXIDE_UPDATE_ON_BOOT" = "1" ]; then
@@ -112,11 +248,10 @@ if [ "$RUST_OXIDE_ENABLED" = "1" ]; then
 
 	# If necessary, download and install latest Oxide
 	if [ "$INSTALL_OXIDE" = "1" ]; then
-		echo "Downloading and installing latest Oxide.."
-		OXIDE_URL="https://umod.org/games/rust/download/develop"
-		curl -sL $OXIDE_URL | bsdtar -xvf- -C /steamcmd/rust/
-		chmod 755 /steamcmd/rust/CSharpCompiler.x86_x64 > /dev/null 2>&1 &
+		install_oxide
 	fi
+
+	ensure_oxide_installed
 fi
 
 # Start mode 1 means we only want to update
