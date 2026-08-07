@@ -34,13 +34,29 @@ install_or_update()
 {
 	# Install Rust from install.txt
 	echo "Installing or updating Rust.. (this might take a while, be patient)"
-	bash /steamcmd/steamcmd.sh +runscript /app/install.txt
+	local install_log
+	local steamcmd_exit_code
+	if ! install_log="$(mktemp)"; then
+		echo "Exiting, failed to create steamcmd install log!"
+		exit 1
+	fi
 
-	# Terminate if exit code wasn't zero
-	if [ $? -ne 0 ]; then
+	bash /steamcmd/steamcmd.sh +runscript /app/install.txt 2>&1 | tee "$install_log"
+	steamcmd_exit_code=${PIPESTATUS[0]}
+
+	if [ "$steamcmd_exit_code" -ne 0 ]; then
+		rm -f "$install_log"
 		echo "Exiting, steamcmd install or update failed!"
 		exit 1
 	fi
+
+	if ! grep -Fq "Success! App '258550' fully installed." "$install_log"; then
+		rm -f "$install_log"
+		echo "Exiting, steamcmd did not complete the Rust install or update!"
+		exit 1
+	fi
+
+	rm -f "$install_log"
 }
 
 OXIDE_URL="https://umod.org/games/rust/download/develop"
