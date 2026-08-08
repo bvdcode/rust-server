@@ -61,6 +61,7 @@ RUN set -eux; \
         expect \
         tcl \
         libgdiplus \
+        mono-utils \
         nodejs \
         npm; \
     sed -i 's/^#\s*en_US.UTF-8\s\+UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
@@ -185,8 +186,11 @@ COPY start_rust.sh /app/start.sh
 # Copy the Rust update check script
 COPY update_check.sh /app/update_check.sh
 
+# Copy the no-wipe preflight script
+COPY no_wipe.sh /app/no_wipe.sh
+
 # Ensure runtime scripts are executable (preserve exec bit on Windows-built contexts)
-RUN chmod +x /tmp/fix_conn.sh /app/start.sh /app/update_check.sh
+RUN chmod +x /tmp/fix_conn.sh /app/start.sh /app/update_check.sh /app/no_wipe.sh
 
 # Copy extra files (reuse the LICENSE.md already at /, no need for a second COPY)
 RUN cp /LICENSE.md /app/LICENSE.md
@@ -227,6 +231,9 @@ ENV RUST_UPDATE_BRANCH "public"
 ENV RUST_START_MODE "0"
 ENV RUST_OXIDE_ENABLED "0"
 ENV RUST_OXIDE_UPDATE_ON_BOOT "1"
+ENV RUST_NO_WIPE_ENABLED="0"
+ENV RUST_NO_WIPE_BACKUP_DIR="/steamcmd/rust/server-backups"
+ENV RUST_NO_WIPE_MIN_FREE_BYTES="1073741824"
 ENV RUST_RCON_SECURE_WEBSOCKET "0"
 ENV RUST_SERVER_WORLDSIZE "3500"
 ENV RUST_SERVER_MAXPLAYERS "500"

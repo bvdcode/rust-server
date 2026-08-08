@@ -29,6 +29,12 @@ jobs:
           fetch-depth: 0
           lfs: "true"
 
+      - name: Check shell scripts
+        run: shellcheck src/no_wipe.sh src/tests/no_wipe_test.sh
+
+      - name: Test no-wipe migration
+        run: bash src/tests/no_wipe_test.sh
+
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@v0.9.7
         with:

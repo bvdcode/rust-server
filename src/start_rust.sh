@@ -276,6 +276,12 @@ if [ "$RUST_START_MODE" = "1" ]; then
 	exit
 fi
 
+# Verify and migrate versioned saves before Rust can create a new world.
+if ! bash /app/no_wipe.sh; then
+	echo "Exiting, no-wipe preflight failed!"
+	exit 1
+fi
+
 # Remove extra whitespace from startup command
 RUST_STARTUP_COMMAND=$(echo "$RUST_SERVER_STARTUP_ARGUMENTS" | tr -s " ")
 
