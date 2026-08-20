@@ -26,8 +26,8 @@ exit_handler()
 # Trap specific signals and forward to the exit handler
 trap 'exit_handler' SIGINT SIGTERM
 
-# Rust includes a 64-bit version of steamclient.so, so we need to tell the OS where it exists
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/steamcmd/rust/RustDedicated_Data/Plugins/x86_64
+# Rust includes a 64-bit version of steamclient.so, so it needs a dedicated library path.
+RUST_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}/steamcmd/rust/RustDedicated_Data/Plugins/x86_64"
 
 # Define the install/update function
 install_or_update()
@@ -396,11 +396,11 @@ add_argument_pair ARGUMENTS "+server.saveinterval" "RUST_SERVER_SAVE_INTERVAL"
 add_argument_pair ARGUMENTS "+app.port" "RUST_APP_PORT"
 
 if [ "$LOGROTATE_ENABLED" = "1" ]; then
-	unbuffer /steamcmd/rust/RustDedicated $RUST_STARTUP_COMMAND "${ARGUMENTS[@]}" 2>&1 | grep --line-buffered -Ev '^\s*$|Filename' | tee $RUST_SERVER_LOG_FILE &
+	LD_LIBRARY_PATH="$RUST_LD_LIBRARY_PATH" unbuffer /steamcmd/rust/RustDedicated $RUST_STARTUP_COMMAND "${ARGUMENTS[@]}" 2>&1 | grep --line-buffered -Ev '^\s*$|Filename' | tee $RUST_SERVER_LOG_FILE &
 elif [ "$STDLOG_ENABLED" = "1" ]; then
-	/steamcmd/rust/RustDedicated $RUST_STARTUP_COMMAND "${ARGUMENTS[@]}" 2>&1 &
+	LD_LIBRARY_PATH="$RUST_LD_LIBRARY_PATH" /steamcmd/rust/RustDedicated $RUST_STARTUP_COMMAND "${ARGUMENTS[@]}" 2>&1 &
 else
-	/steamcmd/rust/RustDedicated $RUST_STARTUP_COMMAND "${ARGUMENTS[@]}" &
+	LD_LIBRARY_PATH="$RUST_LD_LIBRARY_PATH" /steamcmd/rust/RustDedicated $RUST_STARTUP_COMMAND "${ARGUMENTS[@]}" &
 fi
 
 child=$!
