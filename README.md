@@ -106,9 +106,9 @@ All configuration is done via environment variables. Defaults are defined in [sr
 
 Set `RUST_NO_WIPE_ENABLED=1` together with `RUST_OXIDE_ENABLED=1` to prevent Rust from silently creating a fresh world when an update changes the save-file version.
 
-Immediately before the server starts, the container reads the expected save version from the installed Rust assembly and verifies it against the installed Oxide release protocol. If the active identity contains an older save, it creates and verifies a complete backup of `/steamcmd/rust/server`, then renames only files in the active identity whose names contain the exact old version token. File contents are not modified.
+Immediately before the server starts, the container reads the expected save version from `Assembly-CSharp.dll`, verifies it against the protocol constants in `Rust.Global.dll`, and confirms that the installed Oxide extension has a matching official release. If the active identity contains an older save, it creates and verifies a complete backup of `/steamcmd/rust/server`, then renames only files in the active identity whose names contain the exact old version token. File contents are not modified.
 
-The preflight fails closed: Rust does not start if version detection is ambiguous, Rust and Oxide disagree, multiple primary saves exist, a destination file already exists, a downgrade is requested, the backup cannot be verified, or a rename cannot be completed safely. Completed backups include a manifest and are retained under `RUST_NO_WIPE_BACKUP_DIR`.
+The preflight fails closed: Rust does not start if Rust metadata disagrees, the Oxide release cannot be verified, multiple primary saves exist, a destination file already exists, a downgrade is requested, the backup cannot be verified, or a rename cannot be completed safely. Completed backups include a manifest and are retained under `RUST_NO_WIPE_BACKUP_DIR`.
 
 ### Container
 

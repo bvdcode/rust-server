@@ -166,34 +166,97 @@ extract_rust_save_version()
 	printf '%s\n' "$save_version"
 }
 
+extract_rust_protocol()
+{
+	local rust_global_path="$1"
+	local state_dir="$2"
+	local assembly_hash
+	local cache_path="$state_dir/rust-protocol.tsv"
+	local cached_hash=""
+	local cached_protocol=""
+	local cached_save_version=""
+	local cached_extra=""
+	local protocol_values
+	local protocol
+	local save_version
+	local protocol_extra=""
+	local rust_global_dir
+	local rust_global_name
+
+	assembly_hash="$(sha256sum -- "$rust_global_path" | awk '{ print $1 }')"
+
+	if [ -f "$cache_path" ]; then
+		IFS=$'\t' read -r cached_hash cached_protocol cached_save_version cached_extra < "$cache_path" || true
+		if [ "$cached_hash" = "$assembly_hash" ] &&
+			[[ "$cached_protocol" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
+			[[ "$cached_save_version" =~ ^[1-9][0-9]*$ ]] &&
+			[ -z "$cached_extra" ]; then
+			printf '%s\t%s\n' "$cached_protocol" "$cached_save_version"
+			return 0
+		fi
+	fi
+
+	rust_global_dir="$(dirname -- "$rust_global_path")"
+	rust_global_name="$(basename -- "$rust_global_path")"
+	if ! protocol_values="$(
+		cd -- "$rust_global_dir" || exit 1
+		monop -r:"$rust_global_name" Rust.Protocol 2> /dev/null |
+		awk '
+			$1 == "public" && $2 == "const" && $3 == "int" && $5 == "=" {
+				value = $6
+				sub(/;$/, "", value)
+				if ($4 == "network") network = value
+				if ($4 == "save") save = value
+				if ($4 == "report") report = value
+			}
+			END {
+				if (network ~ /^[1-9][0-9]*$/ &&
+					save ~ /^[1-9][0-9]*$/ &&
+					report ~ /^[1-9][0-9]*$/) {
+					printf "%s.%s.%s\t%s\n", network, save, report, save
+				} else {
+					exit 1
+				}
+			}
+		'
+	)"; then
+		fail "could not extract Rust.Protocol constants from $rust_global_path"
+		return 1
+	fi
+
+	IFS=$'\t' read -r protocol save_version protocol_extra <<< "$protocol_values"
+	if ! [[ "$protocol" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+		! [[ "$save_version" =~ ^[1-9][0-9]*$ ]] ||
+		[ -n "$protocol_extra" ]; then
+		fail "Rust protocol metadata is invalid: $protocol_values"
+		return 1
+	fi
+
+	write_cache "$cache_path" "${assembly_hash}"$'\t'"${protocol}"$'\t'"${save_version}"
+	printf '%s\t%s\n' "$protocol" "$save_version"
+}
+
 extract_oxide_release()
 {
 	local oxide_path="$1"
 	local state_dir="$2"
 	local release_api="$3"
 	local oxide_hash
-	local cache_path="$state_dir/oxide-protocol.tsv"
+	local cache_path="$state_dir/oxide-release.tsv"
 	local cached_hash=""
 	local cached_version=""
-	local cached_protocol=""
-	local cached_save_version=""
 	local cached_extra=""
 	local assembly_version
 	local oxide_version
-	local release_values
-	local protocol
-	local save_version
 
 	oxide_hash="$(sha256sum -- "$oxide_path" | awk '{ print $1 }')"
 
 	if [ -f "$cache_path" ]; then
-		IFS=$'\t' read -r cached_hash cached_version cached_protocol cached_save_version cached_extra < "$cache_path" || true
+		IFS=$'\t' read -r cached_hash cached_version cached_extra < "$cache_path" || true
 		if [ "$cached_hash" = "$oxide_hash" ] &&
 			[[ "$cached_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
-			[[ "$cached_protocol" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
-			[[ "$cached_save_version" =~ ^[1-9][0-9]*$ ]] &&
 			[ -z "$cached_extra" ]; then
-			printf '%s\t%s\t%s\n' "$cached_version" "$cached_protocol" "$cached_save_version"
+			printf '%s\n' "$cached_version"
 			return 0
 		fi
 	fi
@@ -226,52 +289,27 @@ extract_oxide_release()
 		return 1
 	fi
 
-	if ! release_values="$(EXPECTED_OXIDE_VERSION="$oxide_version" node - "$TEMP_RELEASE_FILE" <<'NODE'
+	if ! EXPECTED_OXIDE_VERSION="$oxide_version" node - "$TEMP_RELEASE_FILE" <<'NODE'
 const fs = require("fs");
 
 const filePath = process.argv[2];
 const expectedVersion = process.env.EXPECTED_OXIDE_VERSION;
 const release = JSON.parse(fs.readFileSync(filePath, "utf8"));
 
-if (release.tag_name !== expectedVersion || typeof release.body !== "string") {
+if (release.tag_name !== expectedVersion) {
     process.exit(1);
 }
-
-const matches = [...release.body.matchAll(/\(([0-9]+)\.([0-9]+)\.([0-9]+)\)/g)];
-const protocols = new Map();
-
-for (const match of matches) {
-    protocols.set(match[0], {
-        protocol: `${match[1]}.${match[2]}.${match[3]}`,
-        saveVersion: match[2],
-    });
-}
-
-if (protocols.size !== 1) {
-    process.exit(1);
-}
-
-const value = protocols.values().next().value;
-process.stdout.write(`${value.protocol}\t${value.saveVersion}\n`);
 NODE
-	)"; then
-		fail "Oxide release $oxide_version does not contain one unambiguous Rust protocol"
+	then
+		fail "official Oxide release metadata does not match assembly version $oxide_version"
 		return 1
 	fi
 
 	rm -f -- "$TEMP_RELEASE_FILE"
 	TEMP_RELEASE_FILE=""
 
-	IFS=$'\t' read -r protocol save_version cached_extra <<< "$release_values"
-	if ! [[ "$protocol" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-		! [[ "$save_version" =~ ^[1-9][0-9]*$ ]] ||
-		[ -n "$cached_extra" ]; then
-		fail "Oxide release protocol metadata is invalid: $release_values"
-		return 1
-	fi
-
-	write_cache "$cache_path" "${oxide_hash}"$'\t'"${oxide_version}"$'\t'"${protocol}"$'\t'"${save_version}"
-	printf '%s\t%s\t%s\n' "$oxide_version" "$protocol" "$save_version"
+	write_cache "$cache_path" "${oxide_hash}"$'\t'"${oxide_version}"
+	printf '%s\n' "$oxide_version"
 }
 
 validate_paths()
@@ -615,13 +653,14 @@ main()
 	local backup_root
 	local state_dir
 	local assembly_path
+	local rust_global_path
 	local oxide_path
 	local release_api="${RUST_NO_WIPE_OXIDE_RELEASE_API:-$DEFAULT_OXIDE_RELEASE_API}"
 	local min_free_bytes="${RUST_NO_WIPE_MIN_FREE_BYTES:-$DEFAULT_MIN_FREE_BYTES}"
 	local rust_save_version
-	local oxide_values
-	local oxide_save_version
-	local oxide_extra=""
+	local rust_protocol_values
+	local rust_protocol_save_version
+	local rust_protocol_extra=""
 	local command_name
 
 	case "$enabled" in
@@ -657,7 +696,7 @@ main()
 	fi
 	min_free_bytes=$((10#$min_free_bytes))
 
-	for command_name in awk basename cmp cp curl date df diff dirname du find flock mkdir mktemp monodis mv node realpath rm sha256sum sort sync wc; do
+	for command_name in awk basename cmp cp curl date df diff dirname du find flock mkdir mktemp monodis monop mv node realpath rm sha256sum sort sync wc; do
 		require_command "$command_name"
 	done
 
@@ -668,6 +707,7 @@ main()
 	BACKUP_ROOT_PATH="$backup_root"
 	state_dir="$rust_root/.no-wipe"
 	assembly_path="$rust_root/RustDedicated_Data/Managed/Assembly-CSharp.dll"
+	rust_global_path="$rust_root/RustDedicated_Data/Managed/Rust.Global.dll"
 	oxide_path="$rust_root/RustDedicated_Data/Managed/Oxide.Rust.dll"
 
 	validate_paths "$rust_root" "$server_root" "$identity_path" "$backup_root"
@@ -677,7 +717,7 @@ main()
 		return 1
 	fi
 
-	if [ ! -f "$assembly_path" ] || [ ! -f "$oxide_path" ]; then
+	if [ ! -f "$assembly_path" ] || [ ! -f "$rust_global_path" ] || [ ! -f "$oxide_path" ]; then
 		fail "Rust or Oxide assemblies are missing"
 		return 1
 	fi
@@ -693,21 +733,22 @@ main()
 	fi
 
 	rust_save_version="$(extract_rust_save_version "$assembly_path" "$state_dir")"
-	oxide_values="$(extract_oxide_release "$oxide_path" "$state_dir" "$release_api")"
-	IFS=$'\t' read -r OXIDE_VERSION OXIDE_PROTOCOL oxide_save_version oxide_extra <<< "$oxide_values"
+	rust_protocol_values="$(extract_rust_protocol "$rust_global_path" "$state_dir")"
+	IFS=$'\t' read -r OXIDE_PROTOCOL rust_protocol_save_version rust_protocol_extra <<< "$rust_protocol_values"
 
-	if [ -n "$oxide_extra" ] || ! [[ "$oxide_save_version" =~ ^[1-9][0-9]*$ ]]; then
-		fail "could not read verified Oxide protocol metadata"
+	if [ -n "$rust_protocol_extra" ] || ! [[ "$rust_protocol_save_version" =~ ^[1-9][0-9]*$ ]]; then
+		fail "could not read verified Rust protocol metadata"
 		return 1
 	fi
 
-	if [ "$rust_save_version" != "$oxide_save_version" ]; then
-		fail "installed Rust expects save version $rust_save_version, but Oxide $OXIDE_VERSION targets $OXIDE_PROTOCOL"
+	if [ "$rust_save_version" != "$rust_protocol_save_version" ]; then
+		fail "Assembly-CSharp expects save version $rust_save_version, but Rust.Global reports protocol $OXIDE_PROTOCOL"
 		return 1
 	fi
+	OXIDE_VERSION="$(extract_oxide_release "$oxide_path" "$state_dir" "$release_api")"
 
 	RUST_BUILD_ID="$(read_rust_build_id "$rust_root/steamapps/appmanifest_258550.acf")"
-	log "verified Rust build $RUST_BUILD_ID save version $rust_save_version against Oxide $OXIDE_VERSION ($OXIDE_PROTOCOL)"
+	log "verified Rust build $RUST_BUILD_ID protocol $OXIDE_PROTOCOL with official Oxide release $OXIDE_VERSION"
 
 	find_current_save "$identity_path"
 	if [ -z "$CURRENT_SAVE_PATH" ]; then

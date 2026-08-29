@@ -101,6 +101,7 @@ setup_case()
 		"$FAKE_BIN_PATH"
 
 	printf 'rust-assembly-%s\n' "$case_name" > "$RUST_ROOT_PATH/RustDedicated_Data/Managed/Assembly-CSharp.dll"
+	printf 'rust-global-%s\n' "$case_name" > "$RUST_ROOT_PATH/RustDedicated_Data/Managed/Rust.Global.dll"
 	printf 'oxide-assembly-%s\n' "$case_name" > "$RUST_ROOT_PATH/RustDedicated_Data/Managed/Oxide.Rust.dll"
 	printf '"AppState" { "buildid" "24587531" }\n' > "$RUST_ROOT_PATH/steamapps/appmanifest_258550.acf"
 
@@ -129,6 +130,20 @@ cat <<IL
 IL
 SCRIPT
 
+	cat > "$FAKE_BIN_PATH/monop" <<'SCRIPT'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+IFS='.' read -r network save report <<< "${FAKE_OXIDE_PROTOCOL:?}"
+cat <<OUTPUT
+public static class Protocol {
+    public const int network = ${network};
+    public const int save = ${save};
+    public const int report = ${report};
+}
+OUTPUT
+SCRIPT
+
 	cat > "$FAKE_BIN_PATH/curl" <<'SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -147,12 +162,10 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$output_path" ]
-printf '{"tag_name":"%s","body":"Patch for Rust (%s)"}\n' \
-	"${FAKE_OXIDE_VERSION:?}" \
-	"${FAKE_OXIDE_PROTOCOL:?}" > "$output_path"
+printf '{"tag_name":"%s","body":""}\n' "${FAKE_OXIDE_VERSION:?}" > "$output_path"
 SCRIPT
 
-	chmod +x "$FAKE_BIN_PATH/monodis" "$FAKE_BIN_PATH/curl"
+	chmod +x "$FAKE_BIN_PATH/monodis" "$FAKE_BIN_PATH/monop" "$FAKE_BIN_PATH/curl"
 }
 
 run_no_wipe()
@@ -292,18 +305,18 @@ test_duplicate_migration_target()
 	pass "duplicate migration targets fail before backup or rename"
 }
 
-test_oxide_protocol_mismatch()
+test_rust_protocol_mismatch()
 {
 	setup_case "oxide-mismatch"
 	printf 'world\n' > "$IDENTITY_PATH/amazon.282.sav"
 
 	if run_no_wipe FAKE_OXIDE_PROTOCOL="2630.282.1" > /dev/null 2>&1; then
-		fail_test "Rust and Oxide save version mismatch should fail"
+		fail_test "Assembly-CSharp and Rust.Global save version mismatch should fail"
 	fi
 
 	assert_exists "$IDENTITY_PATH/amazon.282.sav"
 	assert_no_completed_backup "$BACKUP_ROOT_PATH"
-	pass "Rust and Oxide protocol mismatch fails before touching saves"
+	pass "Rust protocol mismatch fails before touching saves"
 }
 
 test_downgrade_blocked()
@@ -417,11 +430,15 @@ test_cached_binary_metadata()
 #!/usr/bin/env bash
 exit 97
 SCRIPT
+	cat > "$FAKE_BIN_PATH/monop" <<'SCRIPT'
+#!/usr/bin/env bash
+exit 99
+SCRIPT
 	cat > "$FAKE_BIN_PATH/curl" <<'SCRIPT'
 #!/usr/bin/env bash
 exit 98
 SCRIPT
-	chmod +x "$FAKE_BIN_PATH/monodis" "$FAKE_BIN_PATH/curl"
+	chmod +x "$FAKE_BIN_PATH/monodis" "$FAKE_BIN_PATH/monop" "$FAKE_BIN_PATH/curl"
 
 	run_no_wipe > /dev/null
 	assert_exists "$IDENTITY_PATH/amazon.283.sav"
@@ -435,7 +452,7 @@ test_successful_migration
 test_ambiguous_primary_saves
 test_target_conflict
 test_duplicate_migration_target
-test_oxide_protocol_mismatch
+test_rust_protocol_mismatch
 test_downgrade_blocked
 test_insufficient_backup_space
 test_backup_verification_failure
